@@ -11,7 +11,8 @@ fc_weight_name = 'logits/fc/weights'
 cifar100_class_fname = 'fine_label_names.txt'
 output_fname = 'clustering.pkl'
 
-num_cluster = 5
+num_cluster1 = 2
+num_cluster2 = 5
 
 # Spectral clustering
 def spectral_clustering(X, n_clusters):
@@ -41,18 +42,24 @@ weight = weight.transpose()
 
 # Clustering
 print('Clustering...\n')
-y, clusters, centers = spectral_clustering(weight, num_cluster)
+y2, clusters2, centers2 = spectral_clustering(weight, num_cluster2)
+y1, clusters1, centers1 = spectral_clustering(centers2, num_cluster1)
 
-for i, c in enumerate(clusters):
-    print 'Cluster %d: ' % (i+1),
-    for idx in c:
-        print classes[idx],
-    print ' '
+output = []
+for i1, c1 in enumerate(clusters1):
+    temp1 = []
+    for i2, ci2 in enumerate(c1):
+        print 'Cluster %d-%d: ' % (i1+1, i2+1) ,
+        for idx in clusters2[ci2]:
+            print classes[idx] ,
+        print ' '
+        temp1.append(clusters2[ci2])
+    output.append(temp1)
 print ' '
 
 # Save as pkl file
 print('Save as pkl file')
 with open(output_fname, 'wb') as fd:
-    pickle.dump(clusters, fd)
+    pickle.dump(output, fd)
 
 print('Done!')
