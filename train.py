@@ -26,6 +26,8 @@ tf.app.flags.DEFINE_integer('num_residual_units', 2, """Number of residual block
                                                 Total number of conv layers will be 6n+4""")
 tf.app.flags.DEFINE_integer('k', 2, """Network width multiplier""")
 tf.app.flags.DEFINE_string('cluster_path', './scripts/clustering.pkl', """Path to 2-level clustering of CIFAR-100.""")
+tf.app.flags.DEFINE_boolean('no_logit_map', False, """Whether to re-map logit for classes to be clustered correctly.
+                                                      If set to True, the classes will be wrongly clustered.""")
 
 # Optimization Configuration
 tf.app.flags.DEFINE_float('l2_weight', 0.0001, """L2 loss weight applied all the weights""")
@@ -66,6 +68,7 @@ def train():
     print('\tResidual blocks per group: %d' % FLAGS.num_residual_units)
     print('\tNetwork width multiplier: %d' % FLAGS.k)
     print('\tClustering file: %s' % FLAGS.cluster_path)
+    print('\tWrong logit map: %d' % FLAGS.no_logit_map)
 
     print('[Optimization Configuration]')
     print('\tL2 loss weight: %f' % FLAGS.l2_weight)
@@ -112,7 +115,8 @@ def train():
                             initial_lr=FLAGS.initial_lr,
                             decay_step=decay_step,
                             lr_decay=FLAGS.lr_decay,
-                            momentum=FLAGS.momentum)
+                            momentum=FLAGS.momentum,
+                            no_logit_map=FLAGS.no_logit_map)
         network = resnet.ResNet(hp, images, labels, global_step)
         network.set_clustering(clustering)
         network.build_model()

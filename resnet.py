@@ -9,7 +9,7 @@ import utils
 HParams = namedtuple('HParams',
                     'batch_size, num_classes, num_residual_units, k, '
                     'weight_decay, initial_lr, decay_step, lr_decay, '
-                    'momentum')
+                    'momentum, no_logit_map')
 
 
 class ResNet(object):
@@ -77,7 +77,8 @@ class ResNet(object):
             x_shape = x.get_shape().as_list()
             x = tf.reshape(x, [-1, x_shape[1]])
             x = self.fc_split(x, filter2_split2, self._split2)
-            x = tf.transpose(tf.gather(tf.transpose(x), self._logit_map))
+            if not self._hp.no_logit_map:
+                x = tf.transpose(tf.gather(tf.transpose(x), self._logit_map))
 
         self._logits = x
 
