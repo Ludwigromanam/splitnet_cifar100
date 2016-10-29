@@ -1,0 +1,1 @@
+# splitnet_cifar100
