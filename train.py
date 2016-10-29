@@ -25,6 +25,7 @@ tf.app.flags.DEFINE_integer('batch_size', 100, """Number of images to process in
 tf.app.flags.DEFINE_integer('num_residual_units', 2, """Number of residual block per group.
                                                 Total number of conv layers will be 6n+4""")
 tf.app.flags.DEFINE_integer('k', 2, """Network width multiplier""")
+tf.app.flags.DEFINE_string('cluster_path', './scripts/clustering.pkl', """Path to 2-level clustering of CIFAR-100.""")
 
 # Optimization Configuration
 tf.app.flags.DEFINE_float('l2_weight', 0.0001, """L2 loss weight applied all the weights""")
@@ -64,6 +65,7 @@ def train():
     print('\tBatch size: %d' % FLAGS.batch_size)
     print('\tResidual blocks per group: %d' % FLAGS.num_residual_units)
     print('\tNetwork width multiplier: %d' % FLAGS.k)
+    print('\tClustering file: %s' % FLAGS.cluster_path)
 
     print('[Optimization Configuration]')
     print('\tL2 loss weight: %f' % FLAGS.l2_weight)
@@ -83,9 +85,8 @@ def train():
     print('\tLog device placement: %d' % FLAGS.log_device_placement)
 
 
-
-    with open('scripts/clustering.pkl') as fd:
-        class_split = pickle.load(fd)
+    with open(FLAGS.cluster_path) as fd:
+        clustering = pickle.load(fd)
 
     with tf.Graph().as_default():
         init_step = 0
@@ -113,7 +114,7 @@ def train():
                             lr_decay=FLAGS.lr_decay,
                             momentum=FLAGS.momentum)
         network = resnet.ResNet(hp, images, labels, global_step)
-        network.set_split(class_split)
+        network.set_clustering(clustering)
         network.build_model()
         network.build_train_op()
 
@@ -169,15 +170,6 @@ def train():
                 test_summary.value.add(tag='test/acc', simple_value=test_acc)
                 test_summary.value.add(tag='test/best_acc', simple_value=test_best_acc)
                 summary_writer.add_summary(test_summary, step)
-                # test_loss_summary = tf.Summary()
-                # test_loss_summary.value.add(tag='test/loss', simple_value=test_loss)
-                # summary_writer.add_summary(test_loss_summary, step)
-                # test_acc_summary = tf.Summary()
-                # test_acc_summary.value.add(tag='test/acc', simple_value=test_acc)
-                # summary_writer.add_summary(test_acc_summary, step)
-                # test_best_acc_summary = tf.Summary()
-                # test_best_acc_summary.value.add(tag='test/best_acc', simple_value=test_best_acc)
-                # summary_writer.add_summary(test_best_acc_summary, step)
                 summary_writer.flush()
 
             # Train

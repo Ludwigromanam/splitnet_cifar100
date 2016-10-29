@@ -20,20 +20,22 @@ class ResNet(object):
         self._global_step = global_step
         self.is_train = tf.placeholder(tf.bool)
 
-    def set_split(self, splits):
-        self._splits = splits
-        self._logits_map = [item for sublist in self._splits for item in sublist]
-        self._logits_group = [len(temp) for temp in self._splits]
+    def set_clustering(self, clustering):
+        print('Parse clustering')
+        cluster_size = [[len(sublist2) for sublist2 in sublist1] for sublist1 in clustering]
+        self._split2 = [item for sublist in cluster_size for item in sublist]
+        self._split1 = [sum(sublist) for sublist in cluster_size]
+        self._logit_map = [item for sublist1 in clustering for sublist2 in sublist1 for item in sublist2]
+        print('\t1st level: %d splits %s' % (len(self._split1), self._split1))
+        print('\t2nd level: %d splits %s' % (len(self._split2), self._split2))
+        # print self._logit_map
 
     def _split_channels(self, N, groups):
         group_total = sum(groups)
         float_outputs = [float(N)*t/group_total for t in groups]
-        print float_outputs
         for i in xrange(1, len(float_outputs), 1):
             float_outputs[i] = float_outputs[i-1] + float_outputs[i]
-        print float_outputs
         outputs = map(int, map(round, float_outputs))
-        print outputs
         for i in xrange(len(outputs)-1, 0, -1):
             outputs[i] = outputs[i] - outputs[i-1]
         return outputs
@@ -48,10 +50,19 @@ class ResNet(object):
         filters = [16 * self._hp.k, 32 * self._hp.k, 64 * self._hp.k]
         strides = [1, 2, 2]
 
-        for i in range(3):
-            x = self.residual_block_first(x, filters[i], strides[i], 'unit_%d_0' % (i+1))
-            for j in xrange(1, self._hp.num_residual_units, 1):
-                x = self.residual_block(x, 'unit_%d_%d' % (i+1, j))
+        filter1_split1 = self._split_channels(filters[1], self._split1)
+        filter2_split1 = self._split_channels(filters[2], self._split1)
+        filter2_split2 = self._split_channels(filters[2], self._split2)
+
+        x = self.residual_block_first(x, filters[0], strides[0], 'unit_1_0')
+        for j in xrange(1, self._hp.num_residual_units, 1):
+            x = self.residual_block(x, 'unit_1_%d' % (j))
+        x = self.residual_block_first(x, filters[1], strides[1], 'unit_2_0')
+        for j in xrange(1, self._hp.num_residual_units, 1):
+            x = self.residual_block(x, 'unit_2_%d' % (j))
+        x = self.residual_block_first_split(x, filter1_split1, filter2_split1, strides[2], 'unit_3_0')
+        for j in xrange(1, self._hp.num_residual_units, 1):
+            x = self.residual_block_split(x, filter2_split1, 'unit_3_%d' % (j))
 
         # Last unit
         with tf.variable_scope('unit_last') as scope:
@@ -65,9 +76,8 @@ class ResNet(object):
             print('\tBuilding unit: %s' % scope.name)
             x_shape = x.get_shape().as_list()
             x = tf.reshape(x, [-1, x_shape[1]])
-            fc_in_split = self._split_channels(x_shape[1], self._logits_group)
-            x = self.fc_split(x, fc_in_split, self._logits_group)
-            x = tf.transpose(tf.gather(tf.transpose(x), self._logits_map))
+            x = self.fc_split(x, filter2_split2, self._split2)
+            x = tf.transpose(tf.gather(tf.transpose(x), self._logit_map))
 
         self._logits = x
 
@@ -92,7 +102,6 @@ class ResNet(object):
             print('\tBuilding residual unit: %s' % scope.name)
             x = utils._bn(x, self.is_train, self._global_step, name='bn_1')
             x = utils._relu(x, name='relu_1')
-
 
             in_channel = x.get_shape().as_list()[-1]
             # Shortcut
@@ -125,9 +134,9 @@ class ResNet(object):
             offset_in = 0
             for i, (n_in, n_out) in enumerate(zip(in_splits, out_splits)):
                 sliced = tf.slice(x, [0, 0, 0, offset_in], [b, h, w, n_in])
-                sliced_residual = self.residual_block_first(sliced, n_out, strides, name=(name + '_%d' % (i+1)))
+                sliced_residual = self.residual_block_first(sliced, n_out, strides, name=('split_%d' % (i+1)))
                 outs.append(sliced_residual)
-                offset_in += n_out
+                offset_in += n_in
             concat = tf.concat(3, outs)
         return concat
 
@@ -161,7 +170,7 @@ class ResNet(object):
             offset = 0
             for i, n in enumerate(splits):
                 sliced = tf.slice(x, [0, 0, 0, offset], [b, h, w, n])
-                sliced_residual = self.residual_block(sliced, name=(name + '_%d' % (i+1)))
+                sliced_residual = self.residual_block(sliced, name=('split_%d' % (i+1)))
                 outs.append(sliced_residual)
                 offset += n
             concat = tf.concat(3, outs)
@@ -177,7 +186,7 @@ class ResNet(object):
             offset_in = 0
             for i, (n_in, n_out) in enumerate(zip(in_splits, out_splits)):
                 sliced = tf.slice(x, [0, offset_in], [b, n_in])
-                sliced_fc = utils._fc(sliced, n_out, name="fc_%d" % (i+1))
+                sliced_fc = utils._fc(sliced, n_out, name="split_%d" % (i+1))
                 outs.append(sliced_fc)
                 offset_in += n_in
             concat = tf.concat(1, outs)
