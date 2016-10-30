@@ -8,8 +8,7 @@ import utils
 
 HParams = namedtuple('HParams',
                     'batch_size, num_classes, num_residual_units, k, '
-                    'weight_decay, initial_lr, decay_step, lr_decay, '
-                    'momentum, no_logit_map')
+                    'weight_decay, momentum, no_logit_map')
 
 
 class ResNet(object):
@@ -18,16 +17,21 @@ class ResNet(object):
         self._images = images # Input image
         self._labels = labels
         self._global_step = global_step
+        self.lr = tf.placeholder(tf.float32)
         self.is_train = tf.placeholder(tf.bool)
 
     def set_clustering(self, clustering):
-        print('Parse clustering')
-        cluster_size = [[len(sublist2) for sublist2 in sublist1] for sublist1 in clustering]
-        self._split2 = [item for sublist in cluster_size for item in sublist]
-        self._split1 = [sum(sublist) for sublist in cluster_size]
-        self._logit_map = [item for sublist1 in clustering for sublist2 in sublist1 for item in sublist2]
+        # clustering: 4-depth list(list of list of list of list)
+        # which represented 3-depth tree
+        print('Parsing clustering')
+        cluster_size = [[[len(sublist3) for sublist3 in sublist2] for sublist2 in sublist1] for sublist1 in clustering]
+        self._split3 = [item for sublist1 in cluster_size for sublist2 in sublist1 for item in sublist2]
+        self._split2 = [sum(sublist2) for sublist1 in cluster_size for sublist2 in sublist1]
+        self._split1 = [sum([sum(sublist2) for sublist2 in sublist1]) for sublist1 in cluster_size]
+        self._logit_map = [item for sublist1 in clustering for sublist2 in sublist1 for sublist3 in sublist2 for item in sublist3]
         print('\t1st level: %d splits %s' % (len(self._split1), self._split1))
         print('\t2nd level: %d splits %s' % (len(self._split2), self._split2))
+        print('\t3rd level: %d splits %s' % (len(self._split3), self._split3))
         # print self._logit_map
 
     def _split_channels(self, N, groups):
@@ -50,9 +54,10 @@ class ResNet(object):
         filters = [16 * self._hp.k, 32 * self._hp.k, 64 * self._hp.k]
         strides = [1, 2, 2]
 
-        filter1_split1 = self._split_channels(filters[1], self._split1)
-        filter2_split1 = self._split_channels(filters[2], self._split1)
-        filter2_split2 = self._split_channels(filters[2], self._split2)
+        filter2_split1 = self._split_channels(filters[1], self._split1)
+        filter3_split1 = self._split_channels(filters[2], self._split1)
+        filter3_split2 = self._split_channels(filters[2], self._split2)
+        filter3_split3 = self._split_channels(filters[2], self._split3)
 
         x = self.residual_block_first(x, filters[0], strides[0], 'unit_1_0')
         for j in xrange(1, self._hp.num_residual_units, 1):
@@ -60,9 +65,14 @@ class ResNet(object):
         x = self.residual_block_first(x, filters[1], strides[1], 'unit_2_0')
         for j in xrange(1, self._hp.num_residual_units, 1):
             x = self.residual_block(x, 'unit_2_%d' % (j))
-        x = self.residual_block_first_split(x, filter1_split1, filter2_split1, strides[2], 'unit_3_0')
+        # Split the first half of 3rd residual group into _split1
+        # and the second half of 3rd residual group into _split2
+        x = self.residual_block_first_split(x, filter2_split1, filter3_split1, strides[2], 'unit_3_0')
         for j in xrange(1, self._hp.num_residual_units, 1):
-            x = self.residual_block_split(x, filter2_split1, 'unit_3_%d' % (j))
+            if j < self._hp.num_residual_units / 2:
+                x = self.residual_block_split(x, filter3_split1, 'unit_3_%d' % (j))
+            else:
+                x = self.residual_block_split(x, filter3_split2, 'unit_3_%d' % (j))
 
         # Last unit
         with tf.variable_scope('unit_last') as scope:
@@ -72,11 +82,12 @@ class ResNet(object):
             x = tf.reduce_mean(x, [1, 2])
 
         # Logit
+        # Split the last fc layer into _split3
         with tf.variable_scope('logits') as scope:
             print('\tBuilding unit: %s' % scope.name)
             x_shape = x.get_shape().as_list()
             x = tf.reshape(x, [-1, x_shape[1]])
-            x = self.fc_split(x, filter2_split2, self._split2)
+            x = self.fc_split(x, filter3_split3, self._split3)
             if not self._hp.no_logit_map:
                 x = tf.transpose(tf.gather(tf.transpose(x), self._logit_map))
 
@@ -204,8 +215,8 @@ class ResNet(object):
         self._total_loss = self.loss + l2_loss
 
         # Learning rate
-        self.lr = tf.train.exponential_decay(self._hp.initial_lr, self._global_step,
-                                        self._hp.decay_step, self._hp.lr_decay, staircase=True)
+        # self.lr = tf.train.exponential_decay(self._hp.initial_lr, self._global_step,
+                                        # self._hp.decay_step, self._hp.lr_decay, staircase=True)
         tf.scalar_summary('learing_rate', self.lr)
 
         # Gradient descent step

@@ -56,6 +56,7 @@ for i1, c1 in enumerate(clusters1):
         temp1.append(clusters2[ci2])
     output.append(temp1)
 print ' '
+output = [output]
 
 # Save as pkl file
 print('Save as pkl file')

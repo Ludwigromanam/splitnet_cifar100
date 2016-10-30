@@ -33,7 +33,7 @@ tf.app.flags.DEFINE_boolean('no_logit_map', False, """Whether to re-map logit fo
 tf.app.flags.DEFINE_float('l2_weight', 0.0001, """L2 loss weight applied all the weights""")
 tf.app.flags.DEFINE_float('momentum', 0.9, """The momentum of MomentumOptimizer""")
 tf.app.flags.DEFINE_float('initial_lr', 0.1, """Initial learning rate""")
-tf.app.flags.DEFINE_float('lr_step_epoch', 100.0, """Epochs after which learing rate decays""")
+tf.app.flags.DEFINE_string('lr_step_epoch', "80.0,120.0,160.0", """Epochs after which learing rate decays""")
 tf.app.flags.DEFINE_float('lr_decay', 0.1, """Learning rate decay factor""")
 # tf.app.flags.DEFINE_boolean('basenet_train', True, """Flag whether the model will train the base network""")
 # tf.app.flags.DEFINE_float('basenet_lr_ratio', 0.1, """Learning rate ratio of basenet to bypass net""")
@@ -56,6 +56,13 @@ tf.app.flags.DEFINE_boolean('log_device_placement', False, """Whether to log dev
 FLAGS = tf.app.flags.FLAGS
 
 
+def get_lr(initial_lr, lr_decay, lr_decay_steps, global_step):
+    lr = initial_lr
+    for s in lr_decay_steps:
+        if global_step >= s:
+            lr *= lr_decay
+    return lr
+
 def train():
     print('[Dataset Configuration]')
     print('\tCIFAR-100 dir: %s' % FLAGS.data_dir)
@@ -74,7 +81,7 @@ def train():
     print('\tL2 loss weight: %f' % FLAGS.l2_weight)
     print('\tThe momentum optimizer: %f' % FLAGS.momentum)
     print('\tInitial learning rate: %f' % FLAGS.initial_lr)
-    print('\tEpochs per lr step: %f' % FLAGS.lr_step_epoch)
+    print('\tEpochs to step down lr: %s' % FLAGS.lr_step_epoch)
     print('\tLearning rate decay: %f' % FLAGS.lr_decay)
 
     print('[Training Configuration]')
@@ -97,7 +104,7 @@ def train():
 
         # Get images and labels of CIFAR-100
         with tf.variable_scope('train_image'):
-            train_images, train_labels = data_input.distorted_inputs(FLAGS.data_dir, FLAGS.batch_size)
+            train_images, train_labels = data_input.distorted_inputs(FLAGS.data_dir, FLAGS.batch_size, False)
         with tf.variable_scope('test_image'):
             test_images, test_labels = data_input.inputs(True, FLAGS.data_dir, FLAGS.batch_size)
 
@@ -106,15 +113,13 @@ def train():
         labels = tf.placeholder(tf.int32, [FLAGS.batch_size])
 
         # Build model
-        decay_step = FLAGS.lr_step_epoch * FLAGS.num_train_instance / FLAGS.batch_size
+        lr_decay_steps = map(float,FLAGS.lr_step_epoch.split(','))
+        lr_decay_steps = map(int,[s*FLAGS.num_train_instance/FLAGS.batch_size for s in lr_decay_steps])
         hp = resnet.HParams(batch_size=FLAGS.batch_size,
                             num_classes=FLAGS.num_classes,
                             num_residual_units=FLAGS.num_residual_units,
                             k=FLAGS.k,
                             weight_decay=FLAGS.l2_weight,
-                            initial_lr=FLAGS.initial_lr,
-                            decay_step=decay_step,
-                            lr_decay=FLAGS.lr_decay,
                             momentum=FLAGS.momentum,
                             no_logit_map=FLAGS.no_logit_map)
         network = resnet.ResNet(hp, images, labels, global_step)
@@ -177,11 +182,12 @@ def train():
                 summary_writer.flush()
 
             # Train
+            lr_value = get_lr(FLAGS.initial_lr, FLAGS.lr_decay, lr_decay_steps, step)
             start_time = time.time()
             train_images_val, train_labels_val = sess.run([train_images, train_labels])
-            _, lr_value, loss_value, acc_value, train_summary_str = \
-                    sess.run([network.train_op, network.lr, network.loss, network.acc, train_summary_op],
-                        feed_dict={network.is_train:True, images:train_images_val, labels:train_labels_val})
+            _, loss_value, acc_value, train_summary_str = \
+                    sess.run([network.train_op, network.loss, network.acc, train_summary_op],
+                             feed_dict={network.is_train:True, network.lr:lr_value, images:train_images_val, labels:train_labels_val})
             duration = time.time() - start_time
 
             assert not np.isnan(loss_value)
