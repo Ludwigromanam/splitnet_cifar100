@@ -104,7 +104,7 @@ def train():
 
         # Get images and labels of CIFAR-100
         with tf.variable_scope('train_image'):
-            train_images, train_labels = data_input.distorted_inputs(FLAGS.data_dir, FLAGS.batch_size, False)
+            train_images, train_labels = data_input.distorted_inputs(FLAGS.data_dir, FLAGS.batch_size)
         with tf.variable_scope('test_image'):
             test_images, test_labels = data_input.inputs(True, FLAGS.data_dir, FLAGS.batch_size)
 
@@ -125,7 +125,9 @@ def train():
         network = resnet.ResNet(hp, images, labels, global_step)
         network.set_clustering(clustering)
         network.build_model()
+        print('%d flops' % network._flops)
         network.build_train_op()
+
 
         # Summaries(training)
         train_summary_op = tf.merge_all_summaries()

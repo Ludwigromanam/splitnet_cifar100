@@ -19,6 +19,7 @@ class ResNet(object):
         self._global_step = global_step
         self.lr = tf.placeholder(tf.float32)
         self.is_train = tf.placeholder(tf.bool)
+        self._flops = 0
 
     def set_clustering(self, clustering):
         # clustering: 4-depth list(list of list of list of list)
@@ -80,6 +81,7 @@ class ResNet(object):
             x = utils._bn(x, self.is_train, self._global_step)
             x = utils._relu(x)
             x = tf.reduce_mean(x, [1, 2])
+            self._flops += self._get_bn_flops(x) + self._get_relu_flops(x) + self._get_data_size(x)
 
         # Logit
         # Split the last fc layer into _split3
@@ -112,6 +114,7 @@ class ResNet(object):
         # First residual unit
         with tf.variable_scope(name) as scope:
             print('\tBuilding residual unit: %s' % scope.name)
+            self._flops += self._get_bn_flops(x) + self._get_relu_flops(x)
             x = utils._bn(x, self.is_train, self._global_step, name='bn_1')
             x = utils._relu(x, name='relu_1')
 
@@ -123,17 +126,24 @@ class ResNet(object):
                 else:
                     shortcut = tf.nn.max_pool(x, [1, strides, strides, 1],
                                               [1, strides, strides, 1], 'VALID')
+                    self._flops += self._get_data_size(x)
             else:
+                self._flops += self._get_conv_flops(x, strides, out_channel, strides)
                 shortcut = utils._conv(x, strides, out_channel, strides, name='shortcut')
 
             # Residual
+            self._flops += self._get_conv_flops(x, 3, out_channel, strides)
             x = utils._conv(x, 3, out_channel, strides, name='conv_1')
+            self._flops += self._get_bn_flops(x) + self._get_relu_flops(x)
             x = utils._bn(x, self.is_train, self._global_step, name='bn_2')
             x = utils._relu(x, name='relu_2')
+            self._flops += self._get_conv_flops(x, 3, out_channel, 1)
             x = utils._conv(x, 3, out_channel, 1, name='conv_2')
 
             # Merge
+            self._flops += self._get_data_size(x)
             x = x + shortcut
+
         return x
 
 
@@ -167,8 +177,10 @@ class ResNet(object):
             x = utils._bn(x, self.is_train, self._global_step, name='bn_2')
             x = utils._relu(x, name='relu_2')
             x = utils._conv(x, 3, num_channel, 1, name='conv_2')
+            self._flops += 2 * self._get_conv_flops(x, 3, num_channel, 1) + 2 * self._get_bn_flops(x) + 2 * self._get_relu_flops(x)
 
             # Merge
+            self._flops += self._get_data_size(x)
             x = x + shortcut
         return x
 
@@ -198,11 +210,30 @@ class ResNet(object):
             offset_in = 0
             for i, (n_in, n_out) in enumerate(zip(in_splits, out_splits)):
                 sliced = tf.slice(x, [0, offset_in], [b, n_in])
+                self._flops += self._get_fc_flops(sliced, n_out)
                 sliced_fc = utils._fc(sliced, n_out, name="split_%d" % (i+1))
                 outs.append(sliced_fc)
                 offset_in += n_in
             concat = tf.concat(1, outs)
         return concat
+
+
+    def _get_fc_flops(self, x, n_out):
+        b, n_in = x.get_shape().as_list()
+        return (n_in + 1) * n_out
+
+    def _get_conv_flops(self, x, filter_size, out_channel, strides):
+        b, h, w, in_channel = x.get_shape().as_list()
+        return (h / strides) * (w / strides) * in_channel * out_channel * filter_size * filter_size
+
+    def _get_relu_flops(self, x):
+        return self._get_data_size(x)
+
+    def _get_bn_flops(self, x):
+        return 8 * self._get_data_size(x)
+
+    def _get_data_size(self, x):
+        return np.prod(x.get_shape().as_list()[1:])
 
 
     def build_train_op(self):
