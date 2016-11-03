@@ -12,6 +12,9 @@ import cifar100_input as data_input
 import resnet
 import utils
 import pudb
+import sys
+import select
+from IPython import embed
 
 # Dataset Configuration
 tf.app.flags.DEFINE_string('data_dir', '/data1/common_datasets/cifar100', """Path to the CIFAR-100 binary data.""")
@@ -45,12 +48,14 @@ tf.app.flags.DEFINE_float('lr_decay', 0.1, """Learning rate decay factor""")
 # Training Configuration
 tf.app.flags.DEFINE_string('train_dir', '/data1/solrefa/splitnet/', """Directory where to write log and checkpoint.""")
 tf.app.flags.DEFINE_integer('max_steps', 100000, """Number of batches to run.""")
-tf.app.flags.DEFINE_integer('display', 100, """Number of iterations to display training info.""")
+tf.app.flags.DEFINE_integer('display', 20, """Number of iterations to display training info.""")
 tf.app.flags.DEFINE_integer('test_interval', 1000, """Number of iterations to run a test""")
 tf.app.flags.DEFINE_integer('test_iter', 100, """Number of iterations during a test""")
 tf.app.flags.DEFINE_integer('checkpoint_interval', 10000, """Number of iterations to save parameters as a checkpoint""")
 tf.app.flags.DEFINE_float('gpu_fraction', 0.95, """The fraction of GPU memory to be allocated""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False, """Whether to log device placement.""")
+tf.app.flags.DEFINE_string('checkpoint', None, """Checkpoint to restore""")
+tf.app.flags.DEFINE_string('basemodel', None, """Base model to load paramters""")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -134,7 +139,7 @@ def train():
         # Build an initialization operation to run below.
         init = tf.initialize_all_variables()
 
-        pudb.set_trace()
+        # pudb.set_trace()
 
         # Start running operations on the Graph.
         sess = tf.Session(config=tf.ConfigProto(
@@ -143,25 +148,45 @@ def train():
         sess.run(init)
 
         # Create a saver.
-        saver = tf.train.Saver(tf.all_variables(), max_to_keep=10000)
-        ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
 
-        if ckpt and ckpt.model_checkpoint_path:
-           print('\tRestore from %s' % ckpt.model_checkpoint_path)
-           # Restores from checkpoint
-           saver.restore(sess, ckpt.model_checkpoint_path)
-           init_step = int(ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1])
-        else:
-           print('No checkpoint file found. Start from the scratch.')
+        # Select only base variables (exclude split layers)
+        variables = tf.all_variables()
+        vars_restore = [var for var in variables
+                        if not "split" in var.name and
+                           not "Momentum" in var.name and
+                           not "global_step" in var.name]
+
+        saver_restore = tf.train.Saver(vars_restore, max_to_keep=10000)
+        # ckpt = tf.train.get_checkpoint_state(FLAGS.train_dir)
+
+        # Define a different saver to save model checkpoints
+        saver = tf.train.Saver(tf.all_variables(), max_to_keep=10000)
+
+#        if ckpt and ckpt.model_checkpoint_path:
+#           print('\tRestore from %s' % ckpt.model_checkpoint_path)
+#           # Restores from checkpoint
+#           saver_restore.restore(sess, ckpt.model_checkpoint_path)
+#           init_step = int(ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1])
+#        else:
+#           print('No checkpoint file found. Start from the scratch.')
+
+        if FLAGS.checkpoint:
+          print('Restore from checkpoint %s' % FLAGS.checkpoint)
+          saver.restore(sess, FLAGS.checkpoint)
+        elif FLAGS.basemodel:
+          print('Load parameters from basemodel %s' % FLAGS.basemodel)
+          saver_restore.restore(sess, FLAGS.basemodel)
+
 
         # Start queue runners & summary_writer
         tf.train.start_queue_runners(sess=sess)
         if not os.path.exists(FLAGS.train_dir):
             os.mkdir(FLAGS.train_dir)
-        summary_writer = tf.train.SummaryWriter(FLAGS.train_dir, sess.graph)
+        summary_writer = tf.train.SummaryWriter(os.path.join(FLAGS.train_dir, str(time.time())), sess.graph)
 
         # Training!
         test_best_acc = 0.0
+        lr_value = FLAGS.initial_lr
         for step in xrange(init_step, FLAGS.max_steps):
             # Test
             if step % FLAGS.test_interval == 0:
@@ -186,7 +211,7 @@ def train():
                 summary_writer.flush()
 
             # Train
-            lr_value = get_lr(FLAGS.initial_lr, FLAGS.lr_decay, lr_decay_steps, step)
+            # lr_value = get_lr(FLAGS.initial_lr, FLAGS.lr_decay, lr_decay_steps, step)
             start_time = time.time()
             train_images_val, train_labels_val = sess.run([train_images, train_labels])
             _, loss_value, acc_value, train_summary_str = \
@@ -195,6 +220,11 @@ def train():
             duration = time.time() - start_time
 
             assert not np.isnan(loss_value)
+
+            if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
+              char = sys.stdin.read(1)
+              if char == 'b':
+                embed()
 
             # Display & Summary(training)
             if step % FLAGS.display == 0:

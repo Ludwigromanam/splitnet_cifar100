@@ -55,10 +55,15 @@ class ResNet(object):
         filters = [16 * self._hp.k, 32 * self._hp.k, 64 * self._hp.k]
         strides = [1, 2, 2]
 
+#        filter2_split1 = self._split_channels(filters[1], self._split1)
+#        filter3_split1 = self._split_channels(filters[2], self._split1)
+#        filter3_split2 = self._split_channels(filters[2], self._split2)
+#        filter3_split3 = self._split_channels(filters[2], self._split3)
+
         filter2_split1 = self._split_channels(filters[1], self._split1)
-        filter3_split1 = self._split_channels(filters[2], self._split1)
-        filter3_split2 = self._split_channels(filters[2], self._split2)
-        filter3_split3 = self._split_channels(filters[2], self._split3)
+        filter3_split1 = self._split_channels(int(np.sqrt(len(self._split2))*filters[2]), self._split1)
+        filter3_split2 = self._split_channels(int(np.sqrt(len(self._split2))*filters[2]), self._split2)
+        filter4_split3 = self._split_channels(int(np.sqrt(len(self._split3))*filters[2]), self._split3)
 
         x = self.residual_block_first(x, filters[0], strides[0], 'unit_1_0')
         for j in xrange(1, self._hp.num_residual_units, 1):
@@ -89,7 +94,7 @@ class ResNet(object):
             print('\tBuilding unit: %s' % scope.name)
             x_shape = x.get_shape().as_list()
             x = tf.reshape(x, [-1, x_shape[1]])
-            x = self.fc_split(x, filter3_split3, self._split3)
+            x = self.fc_split(x, filter4_split3, self._split3)
             if not self._hp.no_logit_map:
                 x = tf.transpose(tf.gather(tf.transpose(x), self._logit_map))
 
@@ -254,6 +259,16 @@ class ResNet(object):
         opt = tf.train.MomentumOptimizer(self.lr, self._hp.momentum)
         grads_and_vars = opt.compute_gradients(self._total_loss, tf.trainable_variables())
         # print '\n'.join([t.name for t in tf.trainable_variables()])
+
+        # Finetune gradients
+        for idx, (grad, var) in enumerate(grads_and_vars):
+          if "split" in var.op.name:
+            print('Scale up learning rate for', var.op.name)
+            grad = 10.0 * grad
+
+          grads_and_vars[idx] = (grad, var)
+
+
         apply_grad_op = opt.apply_gradients(grads_and_vars, global_step=self._global_step)
 
         # Batch normalization moving average update
