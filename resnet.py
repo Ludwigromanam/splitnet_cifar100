@@ -29,7 +29,10 @@ class ResNet(object):
         self._split3 = [item for sublist1 in cluster_size for sublist2 in sublist1 for item in sublist2]
         self._split2 = [sum(sublist2) for sublist1 in cluster_size for sublist2 in sublist1]
         self._split1 = [sum([sum(sublist2) for sublist2 in sublist1]) for sublist1 in cluster_size]
-        self._logit_map = [item for sublist1 in clustering for sublist2 in sublist1 for sublist3 in sublist2 for item in sublist3]
+        logit_map = [item for sublist1 in clustering for sublist2 in sublist1 for sublist3 in sublist2 for item in sublist3]
+        self._logit_map = [-1 for _ in range(self._hp.num_classes)]
+        for i, class_idx in enumerate(logit_map):
+            self._logit_map[class_idx] = i
         print('\t1st level: %d splits %s' % (len(self._split1), self._split1))
         print('\t2nd level: %d splits %s' % (len(self._split2), self._split2))
         print('\t3rd level: %d splits %s' % (len(self._split3), self._split3))
