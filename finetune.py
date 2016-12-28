@@ -11,8 +11,9 @@ import numpy as np
 import cifar100_input as data_input
 import resnet
 import utils
-
-
+import sys
+import select
+from IPython import embed
 
 # Dataset Configuration
 tf.app.flags.DEFINE_string('data_dir', './cifar-100-binary', """Path to the CIFAR-100 binary data.""")
@@ -32,7 +33,7 @@ tf.app.flags.DEFINE_boolean('no_logit_map', False, """Whether to re-map logit fo
 # Optimization Configuration
 tf.app.flags.DEFINE_float('l2_weight', 0.0001, """L2 loss weight applied all the weights""")
 tf.app.flags.DEFINE_float('momentum', 0.9, """The momentum of MomentumOptimizer""")
-tf.app.flags.DEFINE_float('initial_lr', 0.1, """Initial learning rate""")
+tf.app.flags.DEFINE_float('initial_lr', 0.001, """Initial learning rate""")
 tf.app.flags.DEFINE_string('lr_step_epoch', "80.0,120.0,160.0", """Epochs after which learing rate decays""")
 tf.app.flags.DEFINE_float('lr_decay', 0.1, """Learning rate decay factor""")
 # tf.app.flags.DEFINE_boolean('basenet_train', True, """Flag whether the model will train the base network""")
@@ -52,6 +53,8 @@ tf.app.flags.DEFINE_integer('test_iter', 100, """Number of iterations during a t
 tf.app.flags.DEFINE_integer('checkpoint_interval', 10000, """Number of iterations to save parameters as a checkpoint""")
 tf.app.flags.DEFINE_float('gpu_fraction', 0.95, """The fraction of GPU memory to be allocated""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False, """Whether to log device placement.""")
+tf.app.flags.DEFINE_string('checkpoint', None, """Checkpoint to restore""")
+tf.app.flags.DEFINE_string('basemodel', None, """Base model to load paramters""")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -150,8 +153,22 @@ def train():
            # Restores from checkpoint
            saver.restore(sess, ckpt.model_checkpoint_path)
            init_step = int(ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1])
+        elif FLAGS.basemodel:
+            # Define a different saver to save model checkpoints
+            # Select only base variables (exclude split layers)
+            print('Load parameters from basemodel %s' % FLAGS.basemodel)
+            variables = tf.all_variables()
+            vars_restore = [var for var in variables
+                            if not "split" in var.name and
+                               not "Momentum" in var.name and
+                               not "unit_last" in var.name and
+                               not "global_step" in var.name]
+            saver_restore = tf.train.Saver(vars_restore, max_to_keep=10000)
+            saver_restore.restore(sess, FLAGS.basemodel)
         else:
-           print('No checkpoint file found. Start from the scratch.')
+            print('There are no checkpoint file or basemodel')
+            return
+
 
         # Start queue runners & summary_writer
         tf.train.start_queue_runners(sess=sess)
@@ -194,6 +211,11 @@ def train():
             duration = time.time() - start_time
 
             assert not np.isnan(loss_value)
+
+            if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
+              char = sys.stdin.read(1)
+              if char == 'b':
+                embed()
 
             # Display & Summary(training)
             if step % FLAGS.display == 0:
