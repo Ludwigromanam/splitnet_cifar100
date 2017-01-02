@@ -8,17 +8,16 @@ import cPickle as pickle
 import tensorflow as tf
 import numpy as np
 
-import cifar100_input as data_input
+import cifar100
 import resnet
-import utils
 
 
 
 # Dataset Configuration
 tf.app.flags.DEFINE_string('data_dir', './cifar-100-binary', """Path to the CIFAR-100 binary data.""")
 tf.app.flags.DEFINE_integer('num_classes', 100, """Number of classes in the dataset.""")
-tf.app.flags.DEFINE_integer('num_train_instance', 50000, """Number of training images.""")
-tf.app.flags.DEFINE_integer('num_test_instance', 10000, """Number of test images.""")
+tf.app.flags.DEFINE_integer('num_train_instance', 45000, """Number of training images.""")
+tf.app.flags.DEFINE_integer('num_test_instance', 5000, """Number of test images.""")
 
 # Network Configuration
 tf.app.flags.DEFINE_integer('batch_size', 100, """Number of images to process in a batch.""")
@@ -35,20 +34,14 @@ tf.app.flags.DEFINE_float('momentum', 0.9, """The momentum of MomentumOptimizer"
 tf.app.flags.DEFINE_float('initial_lr', 0.1, """Initial learning rate""")
 tf.app.flags.DEFINE_string('lr_step_epoch', "80.0,120.0,160.0", """Epochs after which learing rate decays""")
 tf.app.flags.DEFINE_float('lr_decay', 0.1, """Learning rate decay factor""")
-# tf.app.flags.DEFINE_boolean('basenet_train', True, """Flag whether the model will train the base network""")
-# tf.app.flags.DEFINE_float('basenet_lr_ratio', 0.1, """Learning rate ratio of basenet to bypass net""")
-# tf.app.flags.DEFINE_boolean('finetune', False,
-                            # """Flag whether the L1 connection weights will be only made at
-                            # the position where the original bypass network has nonzero
-                            # L1 connection weights""")
-# tf.app.flags.DEFINE_string('pretrained_dir', './pretrain', """Directory where to load pretrained model.(Only for --finetune True""")
+tf.app.flags.DEFINE_float('split_lr_mult', 1.0, """Learning rate multiplicative factor""")
 
 # Training Configuration
 tf.app.flags.DEFINE_string('train_dir', './train', """Directory where to write log and checkpoint.""")
 tf.app.flags.DEFINE_integer('max_steps', 100000, """Number of batches to run.""")
 tf.app.flags.DEFINE_integer('display', 100, """Number of iterations to display training info.""")
 tf.app.flags.DEFINE_integer('test_interval', 1000, """Number of iterations to run a test""")
-tf.app.flags.DEFINE_integer('test_iter', 100, """Number of iterations during a test""")
+tf.app.flags.DEFINE_integer('test_iter', 50, """Number of iterations during a test""")
 tf.app.flags.DEFINE_integer('checkpoint_interval', 10000, """Number of iterations to save parameters as a checkpoint""")
 tf.app.flags.DEFINE_float('gpu_fraction', 0.95, """The fraction of GPU memory to be allocated""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False, """Whether to log device placement.""")
@@ -83,6 +76,7 @@ def train():
     print('\tInitial learning rate: %f' % FLAGS.initial_lr)
     print('\tEpochs to step down lr: %s' % FLAGS.lr_step_epoch)
     print('\tLearning rate decay: %f' % FLAGS.lr_decay)
+    print('\tLearning rate multiplier for split net: %f' % FLAGS.split_lr_mult)
 
     print('[Training Configuration]')
     print('\tTrain dir: %s' % FLAGS.train_dir)
@@ -103,16 +97,28 @@ def train():
         global_step = tf.Variable(0, trainable=False, name='global_step')
 
         # Get images and labels of CIFAR-100
+        print('Load CIFAR-100 dataset')
+        train_dataset_path = os.path.join(FLAGS.data_dir, 'train')
+        test_dataset_path = os.path.join(FLAGS.data_dir, 'val')
+        # train_dataset_path = os.path.join(FLAGS.data_dir, 'train_val')
+        # test_dataset_path = os.path.join(FLAGS.data_dir, 'test')
+        print('\tLoading training data from %s' % train_dataset_path)
         with tf.variable_scope('train_image'):
-            train_images, train_labels = data_input.distorted_inputs(FLAGS.data_dir, FLAGS.batch_size)
+            cifar100_train = cifar100.CIFAR100Runner(train_dataset_path,
+                                    shuffle=True, distort=True, capacity=10000, min_after_dequeue=1000)
+            train_images, train_labels = cifar100_train.get_inputs(FLAGS.batch_size)
+        print('\tLoading test data from %s' % test_dataset_path)
         with tf.variable_scope('test_image'):
-            test_images, test_labels = data_input.inputs(True, FLAGS.data_dir, FLAGS.batch_size)
+            cifar100_test = cifar100.CIFAR100Runner(test_dataset_path,
+                                    shuffle=False, distort=False, capacity=5000, min_after_dequeue=1000)
+                                    # shuffle=False, distort=False, capacity=10000, min_after_dequeue=1000)
+            test_images, test_labels = cifar100_test.get_inputs(FLAGS.batch_size)
 
-        # Build a Graph that computes the predictions from the inference model.
-        images = tf.placeholder(tf.float32, [FLAGS.batch_size, data_input.IMAGE_SIZE, data_input.IMAGE_SIZE, 3])
+        images = tf.placeholder(tf.float32, [FLAGS.batch_size, cifar100.IMAGE_SIZE, cifar100.IMAGE_SIZE, 3])
         labels = tf.placeholder(tf.int32, [FLAGS.batch_size])
 
         # Build model
+        print('Build model')
         lr_decay_steps = map(float,FLAGS.lr_step_epoch.split(','))
         lr_decay_steps = map(int,[s*FLAGS.num_train_instance/FLAGS.batch_size for s in lr_decay_steps])
         hp = resnet.HParams(batch_size=FLAGS.batch_size,
@@ -121,7 +127,8 @@ def train():
                             k=FLAGS.k,
                             weight_decay=FLAGS.l2_weight,
                             momentum=FLAGS.momentum,
-                            no_logit_map=FLAGS.no_logit_map)
+                            no_logit_map=FLAGS.no_logit_map,
+                            split_lr_mult=FLAGS.split_lr_mult)
         network = resnet.ResNet(hp, images, labels, global_step)
         network.set_clustering(clustering)
         network.build_model()
@@ -154,7 +161,9 @@ def train():
            print('No checkpoint file found. Start from the scratch.')
 
         # Start queue runners & summary_writer
-        tf.train.start_queue_runners(sess=sess)
+        cifar100_train.start_threads(sess, n_threads=10)
+        cifar100_test.start_threads(sess, n_threads=1)
+
         if not os.path.exists(FLAGS.train_dir):
             os.mkdir(FLAGS.train_dir)
         summary_writer = tf.train.SummaryWriter(FLAGS.train_dir, sess.graph)

@@ -8,7 +8,7 @@ import utils
 
 HParams = namedtuple('HParams',
                     'batch_size, num_classes, num_residual_units, k, '
-                    'weight_decay, momentum, no_logit_map')
+                    'weight_decay, momentum, no_logit_map, split_lr_mult')
 
 
 class ResNet(object):
@@ -263,14 +263,15 @@ class ResNet(object):
         # Gradient descent step
         opt = tf.train.MomentumOptimizer(self.lr, self._hp.momentum)
         grads_and_vars = opt.compute_gradients(self._total_loss, tf.trainable_variables())
-        # print '\n'.join([t.name for t in tf.trainable_variables()])
 
         # Finetune gradients
-        for idx, (grad, var) in enumerate(grads_and_vars):
-          if "split" in var.op.name:
-            print('Scale up learning rate for', var.op.name)
-            grad = 10.0 * grad
-          grads_and_vars[idx] = (grad, var)
+        if self._hp.split_lr_mult != 1.0:
+          for idx, (grad, var) in enumerate(grads_and_vars):
+            if "split" in var.op.name:
+              print('Scale up learning rate of %s by 10.0' % var.op.name)
+              grad = 10.0 * grad
+            grads_and_vars[idx] = (grad, var)
+
         apply_grad_op = opt.apply_gradients(grads_and_vars, global_step=self._global_step)
 
         # Batch normalization moving average update
