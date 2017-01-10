@@ -57,6 +57,7 @@ cifar-100-binary*
 # Training & evaluation shell files
 *.sh
 !train.sh
+!finetune.sh
 !eval.sh
 
 # Trained checkpoints

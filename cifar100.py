@@ -43,7 +43,7 @@ class CIFAR100Runner(object):
         a queue full of data.
     """
     def __init__(self, pkl_path, shuffle=False, distort=False,
-                 capacity=2000, min_after_dequeue=1000, image_per_thread=16):
+                 capacity=2000, image_per_thread=16):
         self._shuffle = shuffle
         self._distort = distort
         with open(pkl_path, 'rb') as fd:
@@ -52,10 +52,13 @@ class CIFAR100Runner(object):
         self._labels = data['labels']  # numpy 1-D array
         self.size = len(self._labels)
 
-        self.queue = tf.RandomShuffleQueue(shapes=[[32,32,3], []],
-                                           dtypes=[tf.float32, tf.int32],
-                                           capacity=capacity,
-                                           min_after_dequeue=min_after_dequeue)
+        self.queue = tf.FIFOQueue(shapes=[[32,32,3], []],
+                                  dtypes=[tf.float32, tf.int32],
+                                  capacity=capacity)
+        # self.queue = tf.RandomShuffleQueue(shapes=[[32,32,3], []],
+                                           # dtypes=[tf.float32, tf.int32],
+                                           # capacity=capacity,
+                                           # min_after_dequeue=min_after_dequeue)
         self.dataX = tf.placeholder(dtype=tf.float32, shape=[None,32,32,3])
         self.dataY = tf.placeholder(dtype=tf.int32, shape=[None,])
         self.enqueue_op = self.queue.enqueue_many([self.dataX, self.dataY])

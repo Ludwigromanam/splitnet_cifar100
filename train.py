@@ -105,13 +105,13 @@ def train():
         print('\tLoading training data from %s' % train_dataset_path)
         with tf.variable_scope('train_image'):
             cifar100_train = cifar100.CIFAR100Runner(train_dataset_path,
-                                    shuffle=True, distort=True, capacity=10000, min_after_dequeue=1000)
+                                    shuffle=True, distort=True, capacity=10000)
             train_images, train_labels = cifar100_train.get_inputs(FLAGS.batch_size)
         print('\tLoading test data from %s' % test_dataset_path)
         with tf.variable_scope('test_image'):
             cifar100_test = cifar100.CIFAR100Runner(test_dataset_path,
-                                    shuffle=False, distort=False, capacity=5000, min_after_dequeue=1000)
-                                    # shuffle=False, distort=False, capacity=10000, min_after_dequeue=1000)
+                                    shuffle=False, distort=False, capacity=5000)
+                                    # shuffle=False, distort=False, capacity=10000)
             test_images, test_labels = cifar100_test.get_inputs(FLAGS.batch_size)
 
         images = tf.placeholder(tf.float32, [FLAGS.batch_size, cifar100.IMAGE_SIZE, cifar100.IMAGE_SIZE, 3])
